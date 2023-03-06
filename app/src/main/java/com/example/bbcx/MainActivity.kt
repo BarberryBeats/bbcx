@@ -3,12 +3,15 @@ package com.example.bbcx
 import android.Manifest
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.*
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
+import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
@@ -20,29 +23,54 @@ import java.io.*
 
 class MainActivity : AppCompatActivity() {
 
-    val path = Environment.getExternalStorageDirectory().absolutePath + "/com.example.bbcx/"
-    val trainedData = "tessdata"
-    var trainedDataPath = ""
+    private val path = Environment.getExternalStorageDirectory().absolutePath + "/com.example.bbcx/"
+    private val trainedData = "tessdata"
+    private var trainedDataPath = ""
     private lateinit var binding: ActivityMainBinding
 
-    private val getContent =
+    private var tesseractFolder = ""
+
+    private val getContentFromGallery =
         registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
             uri?.let { imageUri ->
                 // Suppose you have an ImageView that should contain the image:
                 binding.img.setImageURI(imageUri)
-                uriToBitmap(uri)?.let { extractText(it) }
+
+                uriToBitmap(uri)?.let {
+                    extractText(it)
+                }
+
+
             }
         }
+    private val getContentFromCamera = registerForActivityResult(takePicture()) { uri ->
+        binding.img.setImageURI(uri)
 
-    fun uriToBitmap(uri: Uri): Bitmap? {
+        uriToBitmap(uri)?.let {
+            extractText(it)
+        }
+    }
+
+
+   private fun takePicture(): ActivityResultContract<Unit, Uri> {
+        return object : ActivityResultContract<Unit, Uri>() {
+            override fun createIntent(context: Context, input: Unit): Intent {
+                return Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            }
+
+            override fun parseResult(resultCode: Int, intent: Intent?): Uri {
+                return intent?.data!!
+            }
+
+        }
+    }
+    private fun uriToBitmap(uri: Uri): Bitmap? {
         val inputStream = contentResolver.openInputStream(uri)
         val options = BitmapFactory.Options().apply {
             inPreferredConfig = Bitmap.Config.ARGB_8888
         }
         return BitmapFactory.decodeStream(inputStream, null, options)
     }
-
-    var tesseractFolder = ""
 
     @SuppressLint("MissingInflatedId")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -53,12 +81,14 @@ class MainActivity : AppCompatActivity() {
         checkAndRequestPermissions()
         createTesseract()
         prepareDirectory(path + trainedData)
-        binding.btn.setOnClickListener {
-
-            getContent.launch("image/*")
-
-
+        binding.btnGallery.setOnClickListener {
+            getContentFromGallery.launch("image/*")
         }
+        binding.btnCamera.setOnClickListener {
+            getContentFromCamera.launch(Unit)
+        }
+
+
     }
 
     private fun prepareDirectory(path: String) {
@@ -75,7 +105,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-
     private fun extractText(bitmap: Bitmap) {
         val tessBaseApi = TessBaseAPI()
         tessBaseApi.setDebug(true)
@@ -85,57 +114,6 @@ class MainActivity : AppCompatActivity() {
         binding.tvRecognize.text = tessBaseApi.utF8Text ?: "Произошла некая ошибка"
         tessBaseApi.end()
 
-    }
-
-    private fun createBitmapWithText(text: String, width: Int, height: Int): Bitmap {
-        val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-
-        // Заливаем фон белым цветом
-        canvas.drawColor(Color.WHITE)
-
-        // Рисуем текст
-        val paint = Paint().apply {
-            color = Color.BLACK
-            textSize = 40f
-            textAlign = Paint.Align.CENTER
-            typeface = Typeface.DEFAULT_BOLD
-        }
-
-        val x = width / 2f
-        val y = height / 2f - (paint.descent() + paint.ascent()) / 2f
-        canvas.drawText(text, x, y, paint)
-
-        return bitmap
-    }
-
-    private fun copyTessDataFiles(path1: String) {
-        try {
-            val fileList = assets.list(path1)
-            for (fileName in fileList!!) {
-                Log.d("Ray", fileName)
-
-                // open file within the assets folder
-                // if it is not already there copy it to the sdcard
-                val pathToDataFile: String = path + trainedData
-                if (!File(pathToDataFile).exists()) {
-                    val `in` = assets.open("$path1/$fileName")
-                    val out: OutputStream = FileOutputStream(pathToDataFile)
-                    Log.d("Ray", "pathhh $pathToDataFile")
-                    // Transfer bytes from in to out
-                    val buf = ByteArray(1024)
-                    var len: Int
-                    while (`in`.read(buf).also { len = it } > 0) {
-                        out.write(buf, 0, len)
-                    }
-                    `in`.close()
-                    out.close()
-                    Log.d("Ray", "Copied " + fileName + "to tessdata")
-                }
-            }
-        } catch (e: IOException) {
-            Log.e("Ray", "Unable to copy files to tessdata $e")
-        }
     }
 
     private fun createTesseract() {
@@ -149,58 +127,25 @@ class MainActivity : AppCompatActivity() {
         val subfolder = File(folder, "tessdata")
         if (!subfolder.exists()) {
             subfolder.mkdir()
-
-            val file = File(subfolder, "eng.traineddata")
-            trainedDataPath = file.absolutePath
-            Log.d(
-               "Ray",
-                "Trained data filepath: " + trainedDataPath
-            )
-
-            if (!file.exists()) {
-                try {
-                    val fileOutputStream: FileOutputStream
-                    val bytes: ByteArray = readRawTrainingData(this) ?: return
-                    val bytesRus: ByteArray = readRawTrainingDataRus(this) ?: return
-                    fileOutputStream = FileOutputStream(file)
-                    fileOutputStream.write(bytes)
-                    fileOutputStream.write(bytesRus)
-                    fileOutputStream.close()
-                    Log.d(
-                        "Ray",
-                        "Prepared training data file"
-                    )
-                } catch (e: FileNotFoundException) {
-                    Log.e(
-                        "Ray",
-                        """
-                Error opening training data file
-                ${e.message}
-                """.trimIndent()
-                    )
-                } catch (e: IOException) {
-                    Log.e(
-                        "Ray",
-                        """
-                Error opening training data file
-                ${e.message}
-                """.trimIndent()
-                    )
-                }
-            } else {
-            }
+            writeRawFile(subfolder, R.raw.eng_traineddata, "eng.traineddata")
+            writeRawFile(subfolder, R.raw.rus, "rus.traineddata")
         }
-        val fileRus = File(subfolder, "rus.traineddata")
+
+    }
+
+    private fun writeRawFile(subfolder: File, rawDataId: Int, rawName: String) {
+
+        val file = File(subfolder, rawName)
+        trainedDataPath = file.absolutePath
         Log.d(
             "Ray",
-            "Trained data filepath: " + trainedDataPath
+            "Trained data filepath: $trainedDataPath"
         )
 
-        if (!fileRus.exists()) {
+        if (!file.exists()) {
             try {
-                val fileOutputStream: FileOutputStream
-                val bytesRus: ByteArray = readRawTrainingDataRus(this) ?: return
-                fileOutputStream = FileOutputStream(fileRus)
+                val bytesRus: ByteArray = readRawTrainingData(this, rawDataId) ?: return
+                val fileOutputStream = FileOutputStream(file)
                 fileOutputStream.write(bytesRus)
                 fileOutputStream.close()
                 Log.d(
@@ -229,44 +174,10 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-    private fun readRawTrainingData(context: Context): ByteArray? {
+    private fun readRawTrainingData(context: Context, rawDataId: Int): ByteArray? {
         try {
             val fileInputStream = context.resources
-                .openRawResource(R.raw.eng_traineddata)
-
-            val bos = ByteArrayOutputStream()
-            val b = ByteArray(1024)
-            var bytesRead: Int
-            while (fileInputStream.read(b).also { bytesRead = it } != -1) {
-                bos.write(b, 0, bytesRead)
-            }
-            fileInputStream.close()
-            return bos.toByteArray()
-        } catch (e: FileNotFoundException) {
-            Log.e(
-                "Ray",
-                """
-                Error reading raw training data file
-                ${e.message}
-                """.trimIndent()
-            )
-            return null
-        } catch (e: IOException) {
-            Log.e(
-                "Ray",
-                """
-                Error reading raw training data file
-                ${e.message}
-                """.trimIndent()
-            )
-        }
-        return null
-    }
-
-    private fun readRawTrainingDataRus(context: Context): ByteArray? {
-        try {
-            val fileInputStream = context.resources
-                .openRawResource(R.raw.rus)
+                .openRawResource(rawDataId)
 
             val bos = ByteArrayOutputStream()
             val b = ByteArray(1024)
@@ -311,6 +222,7 @@ class MainActivity : AppCompatActivity() {
                 ) != PackageManager.PERMISSION_GRANTED
             ) {
                 permissionsToRequest.add(permission)
+
             }
         }
 
