@@ -11,13 +11,21 @@ import android.os.Bundle
 import android.os.Environment
 import android.provider.MediaStore
 import android.util.Log
+import android.view.View.GONE
+import android.view.View.VISIBLE
+import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.lifecycleScope
 import com.example.bbcx.databinding.ActivityMainBinding
 import com.googlecode.tesseract.android.TessBaseAPI
+import com.yalantis.ucrop.UCrop
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.*
 
 
@@ -35,20 +43,41 @@ class MainActivity : AppCompatActivity() {
             uri?.let { imageUri ->
                 // Suppose you have an ImageView that should contain the image:
                 binding.img.setImageURI(imageUri)
+                binding.progressBar.visibility = VISIBLE
+                binding.tvRecognize.text = ""
+                lifecycleScope.launch {
+                    withContext(Dispatchers.IO) {
+                        uriToBitmap(uri)?.let { bitmap ->
+                            val result = extractText(bitmap)
+                            withContext(Dispatchers.Main) {
+                                binding.tvRecognize.text = result
+                                binding.progressBar.visibility = GONE
 
-                uriToBitmap(uri)?.let {
-                    extractText(it)
+                            }
+                        }
+                    }
                 }
-
 
             }
         }
     private val getContentFromCamera = registerForActivityResult(takePicture()) { uri ->
         binding.img.setImageURI(uri)
+        binding.tvRecognize.text = ""
 
-        uriToBitmap(uri)?.let {
-            extractText(it)
+        binding.progressBar.visibility = VISIBLE
+
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                uriToBitmap(uri)?.let { bitmap ->
+                    val result = extractText(bitmap)
+                    withContext(Dispatchers.Main) {
+                        binding.tvRecognize.text = result
+                        binding.progressBar.visibility = GONE
+                    }
+                }
+            }
         }
+
     }
 
 
@@ -105,7 +134,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun extractText(bitmap: Bitmap) {
+    private suspend fun extractText(bitmap: Bitmap?): String {
+        return withContext(Dispatchers.Default) {
+            val tessBaseApi = TessBaseAPI()
+            tessBaseApi.setDebug(true)
+            tessBaseApi.pageSegMode = TessBaseAPI.PageSegMode.PSM_AUTO_OSD
+            tessBaseApi.init(tesseractFolder, "eng+rus")
+            if (bitmap != null) {
+                tessBaseApi.setImage(bitmap)
+            } else {
+            }
+            val result = tessBaseApi.utF8Text ?: "Произошла некая ошибка"
+            tessBaseApi.end()
+            result
+
+        }
+    }
+
+    /*private fun extractText(bitmap: Bitmap) {
         val tessBaseApi = TessBaseAPI()
         tessBaseApi.setDebug(true)
         tessBaseApi.pageSegMode = TessBaseAPI.PageSegMode.PSM_AUTO_OSD
@@ -114,7 +160,7 @@ class MainActivity : AppCompatActivity() {
         binding.tvRecognize.text = tessBaseApi.utF8Text ?: "Произошла некая ошибка"
         tessBaseApi.end()
 
-    }
+    }*/
 
     private fun createTesseract() {
         val appFolder: File = filesDir
